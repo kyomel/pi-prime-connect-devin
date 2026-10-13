@@ -1,0 +1,64 @@
+{
+  "name": "@kyomel/pi-prime-devin",
+  "version": "0.1.0",
+  "description": "Unofficial Devin (devin.ai) model provider for pi and Prime Agent. Exposes your Devin subscription's model catalog inside both agents through the same model API the Devin CLI uses. Not affiliated with or endorsed by Cognition.",
+  "type": "module",
+  "license": "MIT",
+  "author": "kyomel",
+  "bin": {
+    "pi-prime-devin": "./src/cli.ts"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "prime-agent",
+    "devin",
+    "provider",
+    "models"
+  ],
+  "files": [
+    "index.ts",
+    "src/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "npm run typecheck && bun test tests/",
+    "test:models": "bun test tests/models.test.ts",
+    "test:proxy": "bun test tests/proxy.test.ts",
+    "refresh:models": "bun src/cli.ts refresh",
+    "prepublishOnly": "npm test"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "dependencies": {
+    "@bufbuild/protobuf": "^2.12.0",
+    "jeopi-catalog": "^16.5.0"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-ai": {
+      "optional": true
+    },
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@earendil-works/pi-ai": "^1.1.0",
+    "@earendil-works/pi-coding-agent": "^1.1.0",
+    "@types/bun": "^1.4.3",
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0"
+  }
+}

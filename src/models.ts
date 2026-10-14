@@ -1,5 +1,6 @@
 import type { execFile } from "node:child_process"
 import { type DevinModel, readDevinModelsCache, writeDevinModelsCache } from "./catalog.ts"
+import { devinAgentModels } from "./catalogModes.ts"
 import { fetchDevinModelsFromApi } from "./catalogApi.ts"
 import { fetchDevinModelsFromCli } from "./catalogCli.ts"
 import {
@@ -50,6 +51,10 @@ async function fetchLiveCatalog(
 		options.credentials !== undefined ? options.credentials : await loadDevinCredentials()
 
 	if (credentials) {
+		// A Devin API token has no model-list endpoint. Its modes are the catalog.
+		if (credentials.kind === "agent-api") {
+			return { models: devinAgentModels(), source: "api" }
+		}
 		try {
 			const models = await fetchDevinModelsFromApi({
 				credentials,

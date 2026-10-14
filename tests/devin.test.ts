@@ -20,6 +20,10 @@ writeFileSync(
 )
 process.env.DEVIN_CREDENTIALS_PATH = join(dir, "credentials.toml")
 process.env.HOME = dir
+// Pin the key chain to this fixture. Without these, a real key file on the
+// developer machine wins and the stream takes the wrong transport.
+process.env.DEVIN_PI_PRIME_CREDENTIALS_PATH = join(dir, "absent-credentials.json")
+delete process.env.DEVIN_API_KEY
 
 const fakeJwt = `x.${Buffer.from(JSON.stringify({ exp: 4_000_000_000 })).toString("base64url")}.y`
 

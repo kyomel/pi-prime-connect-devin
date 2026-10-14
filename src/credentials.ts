@@ -4,6 +4,11 @@ import { dirname, join } from "node:path"
 
 export const DEVIN_API_URL = "https://server.codeium.com"
 export const DEVIN_SESSION_TOKEN_PREFIX = "devin-session-token$"
+/** Base URL of the Devin agent API. A different product from the model API above. */
+export const DEVIN_AGENT_API_URL = "https://api.devin.ai"
+
+/** Environment variable that overrides the agent API base URL. */
+export const DEVIN_AGENT_API_URL_ENV = "DEVIN_AGENT_API_URL"
 
 /** Environment variable that carries the Devin key for one process. */
 export const DEVIN_API_KEY_ENV = "DEVIN_API_KEY"
@@ -18,13 +23,35 @@ export const DEVIN_KEY_FILE_ENV = "DEVIN_PI_PRIME_CREDENTIALS_PATH"
  */
 export type DevinCredentialSource = "env" | "key-file" | "devin-cli"
 
+/**
+ * Two key families reach two different Devin products, on two wire protocols:
+ *
+ * - `model-api`: a session token (`devin-...`) buys model-quota chat through
+ *   the Connect-RPC endpoints in `devin.ts`.
+ * - `agent-api`: a Devin API token (`apk_...`) buys agent sessions through the
+ *   REST calls in `devinApi.ts`.
+ *
+ * Every caller branches on this, so one key chain can serve both products.
+ */
+export type DevinKeyKind = "model-api" | "agent-api"
+
+/** Prefixes that identify a Devin API token. */
+const AGENT_API_KEY_PREFIXES = ["apk_", "dev_", "pat_"]
+
+export function classifyDevinKey(apiKey: string | undefined): DevinKeyKind {
+	const raw = (apiKey ?? "").trim().replace(/^devin-session-token\$/, "")
+	return AGENT_API_KEY_PREFIXES.some((prefix) => raw.startsWith(prefix)) ? "agent-api" : "model-api"
+}
+
 export interface DevinCredentials {
-  /** Value to place in `Metadata.api_key`; already carries the session-token prefix. */
-  apiKey: string
-  /** API server base URL without a trailing slash. */
-  baseUrl: string
-  /** Which source supplied the key. */
-  source: DevinCredentialSource
+	/** Value to place in `Metadata.api_key`; already carries the session-token prefix. */
+	apiKey: string
+	/** API server base URL without a trailing slash. */
+	baseUrl: string
+	/** Which source supplied the key. */
+	source: DevinCredentialSource
+	/** Which product the key belongs to. Selects the wire protocol. */
+	kind: DevinKeyKind
 }
 
 /** Path of the Devin CLI's own credential file. */
@@ -42,9 +69,11 @@ export function devinKeyFilePath(env: NodeJS.ProcessEnv = process.env): string {
 
 export function normalizeDevinSessionToken(apiKey: string | undefined): string {
   if (!apiKey) return ""
-  return apiKey.startsWith(DEVIN_SESSION_TOKEN_PREFIX)
-    ? apiKey
-    : `${DEVIN_SESSION_TOKEN_PREFIX}${apiKey}`
+  if (apiKey.startsWith(DEVIN_SESSION_TOKEN_PREFIX)) return apiKey
+  // A Devin API token carries its own scheme. Prefixing it turns a working key
+  // into a 401, so it passes through unchanged.
+  if (classifyDevinKey(apiKey) === "agent-api") return apiKey
+  return `${DEVIN_SESSION_TOKEN_PREFIX}${apiKey}`
 }
 
 function readTomlString(toml: string, key: string): string | undefined {
@@ -55,6 +84,29 @@ function readTomlString(toml: string, key: string): string | undefined {
 export function normalizeBaseUrl(url: string | undefined): string {
   const trimmed = (url ?? "").trim()
   return (trimmed || DEVIN_API_URL).replace(/\/+$/, "")
+}
+
+/** Base URL for the agent API calls, overridable per deployment. */
+export function devinAgentApiBaseUrl(env: NodeJS.ProcessEnv = process.env): string {
+  const trimmed = (env[DEVIN_AGENT_API_URL_ENV] ?? "").trim()
+  return (trimmed || DEVIN_AGENT_API_URL).replace(/\/+$/, "")
+}
+
+/**
+ * Picks the host that matches the key kind. A stored `api_server_url` from the
+ * model API names the Connect host, which the agent API does not serve, so an
+ * agent key always falls back to the agent host.
+ */
+export function resolveBaseUrl(
+  kind: DevinKeyKind,
+  url: string | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const trimmed = (url ?? "").trim().replace(/\/+$/, "")
+  if (kind === "agent-api") {
+    return !trimmed || trimmed === DEVIN_API_URL ? devinAgentApiBaseUrl(env) : trimmed
+  }
+  return trimmed || DEVIN_API_URL
 }
 
 /**
@@ -109,10 +161,12 @@ async function loadStoredKey(env: NodeJS.ProcessEnv): Promise<DevinCredentials |
     return null
   }
   const stored = parseKeyFile(contents, path)
+  const kind = classifyDevinKey(stored.apiKey)
   return {
     apiKey: cleanApiKey(stored.apiKey, path),
-    baseUrl: normalizeBaseUrl(stored.apiServerUrl),
+    baseUrl: resolveBaseUrl(kind, stored.apiServerUrl, env),
     source: "key-file",
+    kind,
   }
 }
 
@@ -132,10 +186,12 @@ async function loadDevinCliCredentials(
   }
   const raw = readTomlString(toml, "windsurf_api_key")
   if (!raw) return null
+  const kind = classifyDevinKey(raw)
   return {
     apiKey: cleanApiKey(raw, path),
-    baseUrl: normalizeBaseUrl(readTomlString(toml, "api_server_url")),
+    baseUrl: resolveBaseUrl(kind, readTomlString(toml, "api_server_url"), env),
     source: "devin-cli",
+    kind,
   }
 }
 
@@ -154,10 +210,12 @@ export async function loadDevinCredentials(
 ): Promise<DevinCredentials | null> {
   const fromEnv = env[DEVIN_API_KEY_ENV]
   if (fromEnv && fromEnv.trim()) {
+    const kind = classifyDevinKey(fromEnv)
     return {
       apiKey: cleanApiKey(fromEnv, DEVIN_API_KEY_ENV),
-      baseUrl: normalizeBaseUrl(env[DEVIN_API_SERVER_URL_ENV]),
+      baseUrl: resolveBaseUrl(kind, env[DEVIN_API_SERVER_URL_ENV], env),
       source: "env",
+      kind,
     }
   }
   const stored = await loadStoredKey(env)
@@ -172,9 +230,11 @@ export async function saveDevinKey(
 ): Promise<{ path: string }> {
   const env = options.env ?? process.env
   const path = devinKeyFilePath(env)
+  const rawKey = cleanApiKey(apiKey, "the supplied key")
+  const kind = classifyDevinKey(rawKey)
   const payload: StoredKeyFile = {
-    apiKey: cleanApiKey(apiKey, "the supplied key"),
-    apiServerUrl: normalizeBaseUrl(options.apiServerUrl ?? env[DEVIN_API_SERVER_URL_ENV]),
+    apiKey: rawKey,
+    apiServerUrl: resolveBaseUrl(kind, options.apiServerUrl ?? env[DEVIN_API_SERVER_URL_ENV], env),
   }
   await mkdir(dirname(path), { recursive: true })
   await writeFile(path, `${JSON.stringify(payload, null, 2)}\n`, { encoding: "utf-8", mode: 0o600 })
@@ -200,4 +260,9 @@ export function describeCredentialSource(source: DevinCredentialSource): string 
   if (source === "env") return `environment (${DEVIN_API_KEY_ENV})`
   if (source === "key-file") return "stored key"
   return "Devin CLI sign-in"
+}
+
+/** One line naming the product the key belongs to. */
+export function describeKeyKind(kind: DevinKeyKind): string {
+  return kind === "agent-api" ? "Devin API token (agent sessions)" : "Devin session token (model quota)"
 }

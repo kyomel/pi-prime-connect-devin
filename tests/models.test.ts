@@ -23,6 +23,7 @@ const CREDENTIALS: DevinCredentials = {
 	apiKey: KEY,
 	baseUrl: "https://server.codeium.com",
 	source: "key-file",
+	kind: "model-api",
 }
 
 const JWT = `x.${Buffer.from(JSON.stringify({ exp: 4_000_000_000 })).toString("base64url")}.y`

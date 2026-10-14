@@ -2,16 +2,20 @@
 import { devinModelCachePath } from "../index.ts"
 import { loadCachedDevinModels } from "./catalog.ts"
 import { fetchDevinModelsFromApi } from "./catalogApi.ts"
+import { DEVIN_AGENT_MODES } from "./catalogModes.ts"
 import {
 	DEVIN_API_KEY_ENV,
 	DEVIN_API_SERVER_URL_ENV,
+	classifyDevinKey,
 	clearDevinKey,
 	describeCredentialSource,
+	describeKeyKind,
 	loadDevinCredentials,
-	normalizeBaseUrl,
 	normalizeDevinSessionToken,
+	resolveBaseUrl,
 	saveDevinKey,
 } from "./credentials.ts"
+import { listDevinSessions } from "./devinApi.ts"
 import {
 	installPrimeProvider,
 	primeModelsJsonPath,
@@ -100,18 +104,36 @@ async function main(): Promise<void> {
 				)
 				process.exit(2)
 			}
-			const baseUrl = normalizeBaseUrl(flagValue(args, "--base-url") ?? process.env[DEVIN_API_SERVER_URL_ENV])
+			const kind = classifyDevinKey(supplied.trim())
+			const baseUrl = resolveBaseUrl(
+				kind,
+				flagValue(args, "--base-url") ?? process.env[DEVIN_API_SERVER_URL_ENV],
+			)
 			const credentials = {
 				apiKey: normalizeDevinSessionToken(supplied.trim()),
 				baseUrl,
 				source: "key-file" as const,
+				kind,
 			}
-			console.error("checking the key against the Devin model catalog...")
-			const models = await fetchDevinModelsFromApi({ credentials })
+			console.error(
+				kind === "agent-api"
+					? "checking the key against the Devin agent API..."
+					: "checking the key against the Devin model catalog...",
+			)
+			let catalogCount: number
+			let catalogUnit: string
+			if (kind === "agent-api") {
+				await listDevinSessions({ credentials })
+				catalogCount = DEVIN_AGENT_MODES.length
+				catalogUnit = "agent modes"
+			} else {
+				catalogCount = (await fetchDevinModelsFromApi({ credentials })).length
+				catalogUnit = "models"
+			}
 			const saved = await saveDevinKey(supplied.trim(), {
 				...(flagValue(args, "--base-url") ? { apiServerUrl: baseUrl } : {}),
 			})
-			console.log(`key works: ${models.length} models available (fusion excluded)`)
+			console.log(`key works: ${catalogCount} ${catalogUnit} available (fusion excluded)`)
 			console.log(`stored at ${saved.path} (mode 600)`)
 			console.log("next: `pi-prime-devin install` to wire Prime Agent, and pi picks it up on next start")
 			return
@@ -191,7 +213,7 @@ async function main(): Promise<void> {
 			try {
 				const credentials = await loadDevinCredentials()
 				keyLine = credentials
-					? `${describeCredentialSource(credentials.source)} (${credentials.baseUrl})`
+					? `${describeCredentialSource(credentials.source)} - ${describeKeyKind(credentials.kind)} (${credentials.baseUrl})`
 					: `MISSING - run \`pi-prime-devin auth --key <key>\`, set ${DEVIN_API_KEY_ENV}, or run \`devin auth login\``
 			} catch (error) {
 				keyLine = `ERROR - ${error instanceof Error ? error.message : String(error)}`

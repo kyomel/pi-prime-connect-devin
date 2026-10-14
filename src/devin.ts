@@ -42,6 +42,7 @@ import {
 	StopReason,
 } from "jeopi-catalog/discovery/devin-gen/exa/codeium_common_pb/codeium_common_pb"
 import { devinMetadata, getDevinUserJwt } from "./auth.ts"
+import { runDevinAgentSession } from "./devinAgent.ts"
 import { DEVIN_API_KEY_ENV, loadDevinCredentials } from "./credentials.ts"
 
 const CHAT_MESSAGE_PATH = "/exa.api_server_pb.ApiServerService/GetChatMessage"
@@ -240,6 +241,12 @@ export function streamDevin(
 				)
 			}
 			const apiKey = credentials.apiKey
+			// A Devin API token speaks sessions, not Connect-RPC chat. Hand the turn
+			// to the agent transport and keep one event contract for both.
+			if (credentials.kind === "agent-api") {
+				await runDevinAgentSession({ model, context, credentials, stream, fetchImpl, options })
+				return
+			}
 			const baseUrl = (model.baseUrl || credentials.baseUrl).replace(/\/+$/, "")
 			const auth = await getDevinUserJwt(
 				{ ...credentials, baseUrl },

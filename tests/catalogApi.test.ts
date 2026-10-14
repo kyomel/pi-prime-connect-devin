@@ -21,6 +21,7 @@ const CREDENTIALS: DevinCredentials = {
 	apiKey: KEY,
 	baseUrl: "https://server.codeium.com",
 	source: "key-file",
+	kind: "model-api",
 }
 
 function modelConfig(options: {
